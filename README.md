@@ -3,7 +3,7 @@ A Discord bot to search and warn about lower prices
 
 This project was made using discord.py and pymongo
 
-## Initial configuration:
+## Initial configuration
 
 ### `python3 -m venv env`
 
@@ -23,3 +23,16 @@ Setup your TOKEN and MONGO env variables for Discord BOT token and mongo databas
 
 Start the bot:
 ### `python3 main.py`
+
+
+## How to use
+
+Invite the bot to a discord server.
+
+### Commands
+
+To setup a watcher on a market item:
+### `>warn <channel_name> <item_id>`
+
+To undo a watcher:
+### `>unwarn <channel_name> <item_id>`
