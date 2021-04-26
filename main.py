@@ -4,11 +4,21 @@ import asyncio
 from crawler import min_price_crawler
 import threading
 from concurrent.futures import ThreadPoolExecutor
+import pymongo
+from dotenv import load_dotenv
+import os
+
+
+load_dotenv()
+
+TOKEN = os.getenv('TOKEN')
+MONGO = os.getenv('MONGO')
 
 bot = commands.Bot(command_prefix= ">")
 
-with open("items.txt", "a+"):
-    pass
+client = pymongo.MongoClient(MONGO)
+db = client["Items"]
+collection = db["Items"]
 
 def double_search(list_1, list_2, value_1, value_2):
     if len(list_1) == len(list_2):
@@ -29,72 +39,39 @@ async def market_analyzer():
     await bot.wait_until_ready()
 
     while not bot.is_closed():
-        data = {
-            "channels": [],
-            "items": [],
-            "prices": []
-        }
-
-        new_prices = []
-
-        unique_items = []
-
-        lines = []
-
+        
+        update_ids = []
         threads = []
-
-        index_updates = []
-
-        results = []
-
-        with open("items.txt", "r") as file:
-
-            for line in file.readlines():
-
-                lines.append(line)
-
-                content = line.split(",")
-
-                data["channels"].append(content[0])
-                data["items"].append(content[1])
-                data["prices"].append(content[2])
-
-            unique_items = unique_ids(data["items"])
+        query = collection.find({})
+        items = [i for i in query]
 
         with ThreadPoolExecutor() as executor:
-            for item in unique_items:
+
+            for item in items:
                 try:
-                    thread = executor.submit(min_price_crawler, item)
+                    thread = executor.submit(min_price_crawler, item["item_id"])
                     threads.append(thread)
-                    
-                except:
-                    print("Deu merda")
+                except Exception as e:
+                    print(e)
     
         results = [thread.result() for thread in threads]
 
-        print(results)
+        for result in results:
+            for item in items:
 
-        for i in range(len(results)):
-            for j in range(len(data["items"])):
-                if results[i][0] == data["items"][j]:
-                    if data["prices"][j] == "Item not announced yet" or results[i][1] == "Item not announced yet":
+                if result[0] == item["item_id"]:
+                    if item["price"] == "Item not announced yet" or result[1] == "Item not announced yet":
                         continue
-                    if int(results[i][1]) != int(data["prices"][j]):
-                        index_updates.append(j)
-                    
-        index_updates.sort(reverse=True)
+                    if int(result[1]) != int(item["price"]):
+                        update_ids.append((item["_id"], item["channel_id"], item["item_id"], result[1]))
 
-        for i in index_updates:
-            del lines[i]
-            lines.append(f"{}")
+        for id in update_ids:
+            channel = bot.get_channel(id=int(id[1]))
+            collection.replace_one({"_id": id[0]}, {"channel_id":id[1], "item_id":id[2], "price": id[3]})
 
-        with open("items.txt", "w+") as f:
-            for i in lines:
-                f.write()
+            await channel.send(f"Item: {id[2]} now is {id[3]} zenys")
 
-        print()
-
-        await asyncio.sleep(60)
+        await asyncio.sleep(30)
 
 @bot.event
 async def on_ready():
@@ -109,55 +86,32 @@ async def warn(ctx, channel_name, item_id):
     channel = discord.utils.get(ctx.guild.channels, name=channel_name)
     channel_id = channel.id
 
-    data = {
-        "channels": [],
-        "items": [],
-        "prices": []
-    }
-
-    with open("items.txt", "r") as file:
-        for line in file.readlines():
-            content = line.split(",")
-            
-            data["channels"].append(content[0])
-            data["items"].append(content[1])
-            data["prices"].append(content[2])
-            
-    with open("items.txt", "a") as file:
- 
-        i = double_search(data["channels"], data["items"], str(channel_id), str(item_id))
-
-        print(i)
-       
-        if i != -1:
-            await ctx.send("Item already on warn")
-        else:
-            id, price = min_price_crawler(item_id)
-            file.write(f"{channel_id},{item_id},{price}\n")
-            await ctx.send(f"{user} put a warn in Item: {item_id}")
-
-        
+    try:
+        item = collection.find_one({"channel_id": str(channel_id), "item_id": item_id})
+    except Exception as e:
+        print(e)
+        item = None
+    
+    if item != None:
+        await ctx.send("Item already on warn")
+    else:
+        id, price = min_price_crawler(item_id)
+        collection.insert_one({"channel_id": str(channel_id), "item_id": item_id, "price": price})
+        await ctx.send(f"{user} put a warn in Item: {item_id}")
 
 @bot.command()
-async def set_channel(ctx, name):
+async def unwarn(ctx, channel_name, item_id):
 
-    channel = discord.utils.get(ctx.guild.channels, name=name)
-    channel_id = channel.id 
+    channel = discord.utils.get(ctx.guild.channels, name=channel_name)
+    channel_id = channel.id
 
-    channels = [] 
-
-    with open("channels.txt", "r") as file:
-        for line in file.readlines():
-            channels.append(int(line))
-
-    with open("channels.txt", "a") as file:
-        if channel_id not in channels:
-            file.write(str(channel_id)+"\n")
-            await ctx.send(f"Channel: id: {channel_id}, name: {name} has been set to warn")
-        else:
-            await ctx.send(f"Channel: id: {channel_id}, name: {name} has been set to warn")
+    try:
+        collection.delete_one({"channel_id": str(channel_id), "item_id": item_id})
+        await ctx.send(f"Item: {item_id} has been removed from channel: {channel_name}")
         
+    except Exception as e:
+        print(e)
+        await ctx.send("Item couldn't be removed")
 
-    
 
-bot.run("ODMzMDcyNjc2NzE2ODA2MTg0.YHtBYw.n8HzMn_TgGp5VciGRl2abcDY3dU")
+bot.run(TOKEN)
